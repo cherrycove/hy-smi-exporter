@@ -755,6 +755,14 @@ func parseText(raw []byte) (Snapshot, error) {
 			d.UniqueID = strings.TrimSpace(value)
 		case "health", "health status", "health state", "health check", "device health":
 			d.Health = strings.TrimSpace(value)
+		case "bus id":
+			bus, health := parseBusIDHealth(value)
+			if bus != "" && d.Bus == "" {
+				d.Bus = bus
+			}
+			if health != "" {
+				d.Health = health
+			}
 		case "vbios version":
 			d.VBIOSVersion = strings.TrimSpace(value)
 		case "temperature (sensor edge) (c)":
@@ -834,6 +842,25 @@ func splitRecord(record string) (string, string, bool) {
 		return "", "", false
 	}
 	return strings.TrimSpace(record[:sep]), strings.TrimSpace(record[sep+1:]), true
+}
+
+// parseBusIDHealth splits hy-smi --healthcheck text values such as
+// "0000:03:00.0 \t: Healthy" into PCI bus address and health status.
+func parseBusIDHealth(value string) (string, string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", ""
+	}
+	if idx := strings.LastIndex(value, ":"); idx >= 0 {
+		before := value[:idx]
+		after := value[idx+1:]
+		hasSepSpace := strings.HasSuffix(before, " ") || strings.HasSuffix(before, "\t") ||
+			strings.HasPrefix(after, " ") || strings.HasPrefix(after, "\t")
+		if hasSepSpace {
+			return stringFrom(before), stringFrom(after)
+		}
+	}
+	return stringFrom(value), ""
 }
 
 func firstFloat(value string) float64 {
