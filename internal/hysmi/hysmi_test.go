@@ -380,6 +380,75 @@ echo '{"card0":{"Device ID":"0x6370","Unique ID":"TEST-UUID","Health":"Healthy",
 	}
 }
 
+func TestParseTextHealthcheckBusIDFormat(t *testing.T) {
+	raw := []byte("Warning: [2026-11-20 10:54:03.942] This command does not support to set print format\n" +
+		"================================= System Management Interface ==================================\n" +
+		"HCU[0]\t\t: Bus Id : 0000:03:00.0 \t: Healthy\n" +
+		"HCU[1]\t\t: Bus Id : 0000:04:00.0 \t: Unhealthy\n" +
+		"======================================== End of SMI Log ========================================\n")
+	snap, err := parseText(raw)
+	if err != nil {
+		t.Fatalf("parseText: %v", err)
+	}
+	if len(snap.Devices) != 2 {
+		t.Fatalf("devices: want 2, got %d", len(snap.Devices))
+	}
+	if snap.Devices[0].Index != 0 || snap.Devices[0].Bus != "0000:03:00.0" || snap.Devices[0].Health != "Healthy" {
+		t.Errorf("device 0: got %+v", snap.Devices[0])
+	}
+	if snap.Devices[1].Index != 1 || snap.Devices[1].Bus != "0000:04:00.0" || snap.Devices[1].Health != "Unhealthy" {
+		t.Errorf("device 1: got %+v", snap.Devices[1])
+	}
+}
+
+func TestBackendEnrichesHealthFromTextBusIDFallback(t *testing.T) {
+	stub := writeStubScript(t, `#!/bin/sh
+case "$*" in
+  "-a --json"|"-a")
+    /bin/cat <<'EOF'
+Driver Version: 6.3.31-V1.5.3.beta
+HCU[0] : Device ID: 0x6320
+HCU[0] : Average Graphics Package Power (W): 83.0
+HCU[1] : Device ID: 0x6320
+HCU[1] : Average Graphics Package Power (W): 80.0
+EOF
+    ;;
+  "--showuniqueid --json")
+    echo '{"card0":{"Unique ID":"TEST-UID-0"},"card1":{"Unique ID":"TEST-UID-1"}}'
+    ;;
+  "--healthcheck --json"|"--healthcheck")
+    /bin/cat <<'EOF'
+Warning: [2026-11-20 10:54:03.942] This command does not support to set print format
+HCU[0]		: Bus Id : 0000:03:00.0 	: Healthy
+HCU[1]		: Bus Id : 0000:04:00.0 	: Healthy
+EOF
+    ;;
+  "--showmeminfo all --json")
+    echo '{"card0":{"vram Total Memory (MiB)":"65520","vram Total Used Memory (MiB)":"2","gtt Total Memory (MiB)":"257859"},"card1":{"vram Total Memory (MiB)":"65520","vram Total Used Memory (MiB)":"2","gtt Total Memory (MiB)":"257859"}}'
+    ;;
+  "--showmemavailable --json")
+    echo '{"card0":{"Available memory size (MiB)":"65453"},"card1":{"Available memory size (MiB)":"65453"}}'
+    ;;
+  *) exit 94 ;;
+esac
+`)
+	b := New(stub, time.Second, true)
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	snap, err := b.Snapshot(context.Background(), logger)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if len(snap.Devices) != 2 {
+		t.Fatalf("devices: want 2, got %d", len(snap.Devices))
+	}
+	for i, wantBus := range []string{"0000:03:00.0", "0000:04:00.0"} {
+		d := snap.Devices[i]
+		if d.Health != "Healthy" || d.Bus != wantBus {
+			t.Errorf("device %d: want bus=%q health=Healthy, got bus=%q health=%q", i, wantBus, d.Bus, d.Health)
+		}
+	}
+}
+
 func TestParseTextSummaryTableFallback(t *testing.T) {
 	raw := []byte("Warning: [2026-11-20 10:53:40.363] This command does not support to set print format\n\n" +
 		"================================= System Management Interface ==================================\n" +
